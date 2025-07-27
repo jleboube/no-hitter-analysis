@@ -1,0 +1,18 @@
+[Unit]
+Description=No-Hitter Forecaster Web Application
+After=network.target
+
+[Service]
+Type=simple
+User=joe
+Group=joe
+WorkingDirectory=/home/joe/apps/no-hitter-analysis
+Environment=PATH=/usr/bin:/bin
+ExecStart=/usr/bin/python3 main.py web
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
