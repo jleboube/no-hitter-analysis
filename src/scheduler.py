@@ -50,14 +50,20 @@ class NoHitterScheduler:
             # Save prediction
             self.save_prediction(prediction)
             
+            # Clear any web cache files to force refresh
+            self.clear_web_cache()
+            
             logger.info(f"Daily prediction complete: {prediction['probability_percent']:.2f}%")
             
         except Exception as e:
             logger.error(f"Error in daily prediction routine: {str(e)}")
     
     def save_prediction(self, prediction):
-        """Save prediction to JSON file"""
+        """Save prediction to JSON file with timestamp"""
         predictions = self.load_predictions()
+        
+        # Add timestamp to prediction for freshness tracking
+        prediction['timestamp'] = datetime.now().isoformat()
         
         # Add current prediction
         predictions[prediction['date']] = prediction
@@ -72,7 +78,18 @@ class NoHitterScheduler:
         with open(self.predictions_file, 'w') as f:
             json.dump(predictions, f, indent=2, default=str)
         
-        logger.info(f"Prediction saved for {prediction['date']}")
+        logger.info(f"Prediction saved for {prediction['date']} at {prediction['timestamp']}")
+    
+    def clear_web_cache(self):
+        """Clear web cache to force refresh of predictions"""
+        try:
+            # Signal file for web app to refresh
+            cache_signal_file = 'data/cache_refresh.txt'
+            with open(cache_signal_file, 'w') as f:
+                f.write(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            logger.info("Web cache refresh signal created")
+        except Exception as e:
+            logger.warning(f"Could not create cache refresh signal: {e}")
     
     def load_predictions(self):
         """Load existing predictions from file"""
@@ -98,8 +115,11 @@ class NoHitterScheduler:
         """Start the scheduling service"""
         logger.info("Starting No-Hitter Forecaster scheduler...")
         
-        # Schedule daily prediction at 6 AM ET
+        # Schedule daily prediction at 6 AM local time (adjust as needed)
         schedule.every().day.at("06:00").do(self.run_daily_prediction)
+        
+        # Also schedule at 7 AM as backup
+        schedule.every().day.at("07:00").do(self.run_daily_prediction)
         
         # Run initial prediction if none exists for today
         today = datetime.now().strftime('%Y-%m-%d')
@@ -108,7 +128,8 @@ class NoHitterScheduler:
             logger.info("Running initial prediction for today...")
             self.run_daily_prediction()
         
-        logger.info("Scheduler started. Daily predictions will run at 6:00 AM ET during MLB season.")
+        logger.info("Scheduler started. Daily predictions will run at 6:00 AM and 7:00 AM during MLB season.")
+        logger.info(f"Current local time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Keep the scheduler running
         while True:

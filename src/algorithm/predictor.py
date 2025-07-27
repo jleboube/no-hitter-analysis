@@ -36,6 +36,16 @@ class NoHitterPredictor:
         self.pitcher_patterns = None
         self.stadium_patterns = None
         
+        # MLB teams and their probable starters (simulated for demo)
+        self.mlb_teams = [
+            'NYY', 'BOS', 'TOR', 'TB', 'BAL',
+            'HOU', 'LAA', 'OAK', 'SEA', 'TEX',
+            'CLE', 'CWS', 'DET', 'KC', 'MIN',
+            'ATL', 'MIA', 'NYM', 'PHI', 'WSN',
+            'CHC', 'CIN', 'MIL', 'PIT', 'STL',
+            'ARI', 'COL', 'LAD', 'SD', 'SF'
+        ]
+        
     def load_data(self):
         """Load no-hitter data"""
         df = pd.read_csv(self.data_file)
@@ -148,11 +158,18 @@ class NoHitterPredictor:
         return min(adjustment, 2.0)  # Cap at 2x
     
     def predict_probability(self, target_date=None):
-        """Predict no-hitter probability for given date"""
+        """Predict no-hitter probability by selecting the pitcher with highest probability for given date"""
         if target_date is None:
             target_date = datetime.now().date()
         elif isinstance(target_date, str):
             target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
+        
+        # Get the best pitcher prediction for the date
+        best_pitcher_prediction = self.select_best_pitcher_for_date(target_date)
+        return best_pitcher_prediction
+    
+    def select_best_pitcher_for_date(self, target_date):
+        """Select the single pitcher with highest no-hitter probability for the given date"""
         
         # Load and prepare data
         df = self.load_data()
@@ -205,46 +222,112 @@ class NoHitterPredictor:
         current_decade = (target_date.year // 10) * 10
         decadal_factor = decadal_weights.get(current_decade, 1.0)
         
-        # Enhanced Bayesian-inspired formula with new factors
-        probability = (base_rate * monthly_factor * date_factor * decadal_factor * 
-                      recency_adjustment * weather_factor * pitcher_factor * stadium_factor)
+        # Simulate today's probable pitchers and their matchups
+        probable_pitchers = self.get_probable_pitchers_for_date(target_date)
         
-        # Ensure probability stays within reasonable bounds
-        probability = min(probability, 0.15)  # Increased cap due to new factors
-        probability = max(probability, 0.0005)  # Floor at 0.05%
+        best_pitcher = None
+        best_probability = 0
+        best_result = None
         
-        # Monte Carlo confidence interval
-        confidence_interval = self.calculate_confidence_interval(probability)
+        # Evaluate each probable pitcher
+        for pitcher_info in probable_pitchers:
+            # Calculate pitcher-specific factors
+            pitcher_specific_factor = self.calculate_pitcher_specific_factor(pitcher_info)
+            stadium_factor_specific = self.calculate_pitcher_stadium_factor(pitcher_info)
+            
+            # Enhanced Bayesian formula for this specific pitcher
+            pitcher_probability = (base_rate * monthly_factor * date_factor * decadal_factor * 
+                                 recency_adjustment * weather_factor * pitcher_specific_factor * stadium_factor_specific)
+            
+            # Ensure probability stays within reasonable bounds
+            pitcher_probability = min(pitcher_probability, 0.25)  # Higher cap for individual pitchers
+            pitcher_probability = max(pitcher_probability, 0.0001)  # Floor at 0.01%
+            
+            # Track the best pitcher
+            if pitcher_probability > best_probability:
+                best_probability = pitcher_probability
+                best_pitcher = pitcher_info
+                
+                # Monte Carlo confidence interval for best pitcher
+                confidence_interval = self.calculate_confidence_interval(pitcher_probability)
+                
+                best_result = {
+                    'date': target_date.strftime('%Y-%m-%d'),
+                    'probability': pitcher_probability,
+                    'probability_percent': pitcher_probability * 100,
+                    'confidence_interval': confidence_interval,
+                    'selected_pitcher': {
+                        'name': pitcher_info['name'],
+                        'team': pitcher_info['team'],
+                        'opponent': pitcher_info['opponent'],
+                        'stadium': pitcher_info['stadium']
+                    },
+                    'factors': {
+                        'base_rate': base_rate,
+                        'monthly_factor': monthly_factor,
+                        'date_factor': date_factor,
+                        'decadal_factor': decadal_factor,
+                        'recency_adjustment': recency_adjustment,
+                        'weather_factor': weather_factor,
+                        'pitcher_factor': pitcher_specific_factor,
+                        'stadium_factor': stadium_factor_specific
+                    },
+                    'current_conditions': {
+                        'weather': current_weather,
+                        'pitcher_stats': pitcher_info['stats'],
+                        'stadium_info': stadium_info
+                    },
+                    'explanation': self.generate_pitcher_specific_explanation(
+                        target_date, pitcher_probability, monthly_factor, date_factor, 
+                        recency_adjustment, weather_factor, pitcher_specific_factor, stadium_factor_specific,
+                        current_weather, pitcher_info, stadium_info
+                    )
+                }
         
-        result = {
-            'date': target_date.strftime('%Y-%m-%d'),
-            'probability': probability,
-            'probability_percent': probability * 100,
-            'confidence_interval': confidence_interval,
-            'factors': {
-                'base_rate': base_rate,
-                'monthly_factor': monthly_factor,
-                'date_factor': date_factor,
-                'decadal_factor': decadal_factor,
-                'recency_adjustment': recency_adjustment,
-                'weather_factor': weather_factor,
-                'pitcher_factor': pitcher_factor,
-                'stadium_factor': stadium_factor
-            },
-            'current_conditions': {
-                'weather': current_weather,
-                'pitcher_stats': current_pitcher_stats,
-                'stadium_info': stadium_info
-            },
-            'explanation': self.generate_enhanced_explanation(
-                target_date, probability, monthly_factor, date_factor, 
-                recency_adjustment, weather_factor, pitcher_factor, stadium_factor,
-                current_weather, current_pitcher_stats, stadium_info
-            )
-        }
+        if best_result is None:
+            # Fallback to general prediction if no pitchers found
+            logger.warning("No probable pitchers found, using general prediction")
+            probability = (base_rate * monthly_factor * date_factor * decadal_factor * 
+                          recency_adjustment * weather_factor * pitcher_factor * stadium_factor)
+            probability = min(probability, 0.15)
+            probability = max(probability, 0.0005)
+            confidence_interval = self.calculate_confidence_interval(probability)
+            
+            best_result = {
+                'date': target_date.strftime('%Y-%m-%d'),
+                'probability': probability,
+                'probability_percent': probability * 100,
+                'confidence_interval': confidence_interval,
+                'selected_pitcher': {
+                    'name': 'General Day Forecast',
+                    'team': 'MLB',
+                    'opponent': 'Various',
+                    'stadium': 'Multiple Venues'
+                },
+                'factors': {
+                    'base_rate': base_rate,
+                    'monthly_factor': monthly_factor,
+                    'date_factor': date_factor,
+                    'decadal_factor': decadal_factor,
+                    'recency_adjustment': recency_adjustment,
+                    'weather_factor': weather_factor,
+                    'pitcher_factor': pitcher_factor,
+                    'stadium_factor': stadium_factor
+                },
+                'current_conditions': {
+                    'weather': current_weather,
+                    'pitcher_stats': current_pitcher_stats,
+                    'stadium_info': stadium_info
+                },
+                'explanation': self.generate_enhanced_explanation(
+                    target_date, probability, monthly_factor, date_factor, 
+                    recency_adjustment, weather_factor, pitcher_factor, stadium_factor,
+                    current_weather, current_pitcher_stats, stadium_info
+                )
+            }
         
-        logger.info(f"Enhanced prediction for {target_date}: {probability*100:.2f}%")
-        return result
+        logger.info(f"Best pitcher prediction for {target_date}: {best_pitcher['name'] if best_pitcher else 'General'} - {best_result['probability_percent']:.2f}%")
+        return best_result
     
     def calculate_confidence_interval(self, probability, num_simulations=1000):
         """Calculate confidence interval using Monte Carlo simulation"""
@@ -410,6 +493,209 @@ class NoHitterPredictor:
         
         if not explanations:
             explanations.append("Probability based on historical patterns and current conditions")
+        
+        return "; ".join(explanations)
+    
+    def get_probable_pitchers_for_date(self, target_date):
+        """Get probable starting pitchers for the given date (simulated for demo)"""
+        import random
+        
+        # Seed random for consistent results per date
+        random.seed(target_date.toordinal())
+        
+        # Simulate 8-12 games on a typical day
+        num_games = random.randint(8, 12)
+        probable_pitchers = []
+        
+        available_teams = self.mlb_teams.copy()
+        random.shuffle(available_teams)
+        
+        for i in range(min(num_games, len(available_teams) // 2)):
+            if len(available_teams) < 2:
+                break
+                
+            # Pick two teams for a matchup
+            team1 = available_teams.pop()
+            team2 = available_teams.pop()
+            
+            # Determine home team (randomly for simulation)
+            if random.choice([True, False]):
+                home_team, away_team = team1, team2
+            else:
+                home_team, away_team = team2, team1
+            
+            # Generate pitcher for home team
+            pitcher_info = self.generate_pitcher_info(home_team, away_team, target_date, True)
+            probable_pitchers.append(pitcher_info)
+        
+        return probable_pitchers
+    
+    def generate_pitcher_info(self, team, opponent, target_date, is_home=True):
+        """Generate pitcher information with simulated stats"""
+        import random
+        
+        # Seed based on team and date for consistency
+        random.seed(hash(team + str(target_date)))
+        
+        # Generate realistic pitcher names (simplified for demo)
+        first_names = ['Jake', 'Mike', 'Carlos', 'Tyler', 'Alex', 'Ryan', 'David', 'Chris', 'Matt', 'Luis']
+        last_names = ['Johnson', 'Smith', 'Rodriguez', 'Williams', 'Brown', 'Davis', 'Miller', 'Wilson', 'Moore', 'Taylor']
+        
+        pitcher_name = f"{random.choice(first_names)} {random.choice(last_names)}"
+        
+        # Generate recent form stats
+        stats = {
+            'recent_era': random.uniform(1.8, 5.2),
+            'recent_whip': random.uniform(0.85, 1.75),
+            'k_per_nine': random.uniform(6.0, 13.5),
+            'quality_starts': random.randint(0, 3),
+            'last_5_starts_era': random.uniform(2.0, 5.5),
+            'career_era': random.uniform(3.0, 4.8),
+            'season_record': f"{random.randint(4, 15)}-{random.randint(2, 12)}"
+        }
+        
+        # Get stadium info
+        stadium_info = self.stadium_analyzer.get_stadium_characteristics(team)
+        
+        return {
+            'name': pitcher_name,
+            'team': team,
+            'opponent': opponent,
+            'is_home': is_home,
+            'stadium': stadium_info.get('stadium', f'{team} Stadium'),
+            'stats': stats
+        }
+    
+    def calculate_pitcher_specific_factor(self, pitcher_info):
+        """Calculate pitcher-specific performance factor"""
+        stats = pitcher_info['stats']
+        factor = 1.0
+        
+        # Recent ERA factor (lower is better)
+        recent_era = stats.get('recent_era', 4.0)
+        if recent_era <= 2.5:
+            factor *= 1.5  # Excellent recent form
+        elif recent_era <= 3.5:
+            factor *= 1.2  # Good recent form
+        elif recent_era >= 5.0:
+            factor *= 0.7  # Poor recent form
+        
+        # WHIP factor (lower is better)
+        recent_whip = stats.get('recent_whip', 1.3)
+        if recent_whip <= 1.0:
+            factor *= 1.4  # Excellent control
+        elif recent_whip <= 1.2:
+            factor *= 1.1  # Good control
+        elif recent_whip >= 1.5:
+            factor *= 0.8  # Control issues
+        
+        # Strikeout rate factor (higher is better)
+        k_per_nine = stats.get('k_per_nine', 8.0)
+        if k_per_nine >= 10.0:
+            factor *= 1.3  # Dominant strikeout rate
+        elif k_per_nine >= 8.5:
+            factor *= 1.1  # Good strikeout rate
+        elif k_per_nine <= 6.5:
+            factor *= 0.9  # Low strikeout rate
+        
+        # Quality starts factor
+        quality_starts = stats.get('quality_starts', 1)
+        if quality_starts >= 2:
+            factor *= 1.2  # Consistent quality
+        elif quality_starts == 0:
+            factor *= 0.9  # Inconsistent
+        
+        # Hot streak bonus
+        if recent_era <= 2.5 and recent_whip <= 1.0 and quality_starts >= 2:
+            factor *= 1.3  # Pitcher is on fire
+        
+        # Cap the factor
+        factor = max(0.5, min(3.0, factor))
+        return factor
+    
+    def calculate_pitcher_stadium_factor(self, pitcher_info):
+        """Calculate stadium-specific factor for the pitcher"""
+        try:
+            team = pitcher_info['team']
+            stadium_chars = self.stadium_analyzer.get_stadium_characteristics(team)
+            
+            factor = 1.0
+            
+            # Altitude factor
+            altitude = stadium_chars.get('altitude', 0)
+            if altitude > 3000:  # High altitude (like Coors Field)
+                factor *= 0.8  # Harder to pitch at altitude
+            elif stadium_chars.get('type') == 'dome':
+                factor *= 1.1  # Controlled environment helps
+            
+            # Pitcher friendliness
+            friendliness = self.stadium_analyzer.calculate_pitcher_friendliness(stadium_chars)
+            if friendliness >= 7:
+                factor *= 1.15  # Very pitcher-friendly
+            elif friendliness >= 6:
+                factor *= 1.05  # Somewhat pitcher-friendly
+            elif friendliness <= 4:
+                factor *= 0.9   # Hitter-friendly
+            
+            return max(0.7, min(1.4, factor))
+        except:
+            return 1.0
+    
+    def generate_pitcher_specific_explanation(self, target_date, probability, monthly_factor, 
+                                           date_factor, recency_adjustment, weather_factor, 
+                                           pitcher_factor, stadium_factor, current_weather, 
+                                           pitcher_info, stadium_info):
+        """Generate explanation specific to the selected pitcher"""
+        explanations = []
+        
+        month_names = {4: 'April', 5: 'May', 6: 'June', 7: 'July', 8: 'August', 9: 'September', 10: 'October'}
+        month_name = month_names.get(target_date.month, 'Unknown')
+        
+        # Pitcher-specific explanation
+        pitcher_name = pitcher_info['name']
+        team = pitcher_info['team']
+        opponent = pitcher_info['opponent']
+        stats = pitcher_info['stats']
+        
+        explanations.append(f"{pitcher_name} ({team} vs {opponent}) selected as highest probability pitcher")
+        
+        # Pitcher form analysis
+        recent_era = stats.get('recent_era', 4.0)
+        if recent_era <= 2.5:
+            explanations.append(f"excellent recent form (ERA {recent_era:.2f})")
+        elif recent_era <= 3.5:
+            explanations.append(f"solid recent form (ERA {recent_era:.2f})")
+        elif recent_era >= 5.0:
+            explanations.append(f"struggling recently (ERA {recent_era:.2f})")
+        
+        # Quality starts
+        quality_starts = stats.get('quality_starts', 1)
+        if quality_starts >= 2:
+            explanations.append(f"consistent with {quality_starts}/3 quality starts")
+        
+        # Traditional factors
+        if monthly_factor > 1.1:
+            explanations.append(f"{month_name} historically favors no-hitters")
+        elif monthly_factor < 0.9:
+            explanations.append(f"{month_name} historically less favorable")
+        
+        if date_factor > 1.1:
+            explanations.append(f"{month_name} {target_date.day} is historically significant")
+        
+        if recency_adjustment > 1.1:
+            explanations.append("longer than average since last no-hitter")
+        
+        # Weather factors
+        if weather_factor > 1.1 and current_weather:
+            explanations.append("favorable weather conditions")
+        elif weather_factor < 0.9 and current_weather:
+            explanations.append("challenging weather conditions")
+        
+        # Stadium factors
+        if stadium_factor > 1.1:
+            explanations.append("pitcher-friendly stadium environment")
+        elif stadium_factor < 0.9:
+            explanations.append("hitter-friendly stadium environment")
         
         return "; ".join(explanations)
     

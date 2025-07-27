@@ -26,9 +26,72 @@ def load_data():
     collector = NoHitterDataCollector()
     return collector.load_data()
 
-@st.cache_data
+@st.cache_data(ttl=900)  # Cache for 15 minutes to allow quick refresh
 def get_prediction(date_str=None):
-    """Get prediction for a specific date"""
+    """Get prediction for a specific date with automatic daily refresh"""
+    import json
+    import os
+    
+    current_time = datetime.now()
+    current_hour = current_time.hour
+    today_str = current_time.strftime('%Y-%m-%d')
+    
+    # Check for cache refresh signal from scheduler
+    cache_signal_file = 'data/cache_refresh.txt'
+    predictions_file = 'data/daily_predictions.json'
+    
+    # First priority: Check if scheduler has created today's prediction
+    if os.path.exists(predictions_file):
+        try:
+            with open(predictions_file, 'r') as f:
+                predictions = json.load(f)
+            
+            # If we have today's prediction from scheduler, use it
+            if today_str in predictions:
+                prediction = predictions[today_str]
+                
+                # Verify it's fresh (created after 6 AM today)
+                pred_timestamp = prediction.get('timestamp')
+                if pred_timestamp:
+                    try:
+                        pred_time = datetime.fromisoformat(pred_timestamp.replace('Z', '+00:00'))
+                        today_6am = current_time.replace(hour=6, minute=0, second=0, microsecond=0)
+                        
+                        # If prediction was created after 6 AM today, it's fresh
+                        if pred_time >= today_6am:
+                            return prediction
+                    except:
+                        pass
+                
+                # If no timestamp or old timestamp, but it's for today, still use it
+                # (backwards compatibility)
+                return prediction
+        except:
+            pass
+    
+    # Second priority: Check cache refresh signal
+    if os.path.exists(cache_signal_file):
+        try:
+            with open(cache_signal_file, 'r') as f:
+                signal_time_str = f.read().strip()
+            
+            signal_time = datetime.strptime(signal_time_str, '%Y-%m-%d %H:%M:%S')
+            
+            # If signal is from today after 6 AM, clear Streamlit cache
+            today_6am = current_time.replace(hour=6, minute=0, second=0, microsecond=0)
+            if signal_time >= today_6am:
+                # Clear this function's cache to force refresh
+                get_prediction.clear()
+                
+                # Remove the signal file so we don't keep clearing cache
+                try:
+                    os.remove(cache_signal_file)
+                except:
+                    pass
+        except:
+            pass
+    
+    # Fall back to generating new prediction
     predictor = NoHitterPredictor()
     return predictor.predict_probability(date_str)
 
@@ -65,6 +128,46 @@ def show_home_page():
     # Get today's prediction
     try:
         prediction = get_prediction()
+        
+        # Check if prediction is for today and freshness
+        today_str = today.strftime('%Y-%m-%d')
+        prediction_date = prediction['date']
+        is_today = prediction_date == today_str
+        
+        if not is_today:
+            st.warning(f"⚠️ Showing prediction for {prediction_date} (not today). The scheduler may not have run yet today.")
+            st.info("💡 To generate today's prediction, run: `./update_today.py` from the command line, then refresh this page.")
+        else:
+            # Check if prediction is fresh (from today after 6 AM)
+            pred_timestamp = prediction.get('timestamp')
+            if pred_timestamp:
+                try:
+                    pred_time = datetime.fromisoformat(pred_timestamp.replace('Z', '+00:00'))
+                    today_6am = datetime.now().replace(hour=6, minute=0, second=0, microsecond=0)
+                    
+                    if pred_time >= today_6am:
+                        st.success(f"✅ Fresh prediction generated at {pred_time.strftime('%I:%M %p')} today")
+                    else:
+                        st.info(f"📅 Prediction from {pred_time.strftime('%I:%M %p on %m/%d')} - scheduled update at 6:00 AM")
+                except:
+                    st.info("📅 Automatic daily refresh at 6:00 AM during MLB season")
+            else:
+                st.info("📅 Automatic daily refresh at 6:00 AM during MLB season")
+        
+        # Display selected pitcher information
+        if 'selected_pitcher' in prediction:
+            selected_pitcher = prediction['selected_pitcher']
+            st.subheader(f"🎯 Highest Probability Pitcher: {selected_pitcher['name']}")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Team", selected_pitcher['team'])
+            with col2:
+                st.metric("Opponent", selected_pitcher['opponent'])
+            with col3:
+                st.metric("Stadium", selected_pitcher['stadium'])
+            with col4:
+                st.metric("No-Hitter Probability", f"{prediction['probability_percent']:.2f}%")
         
         # Display main prediction
         col1, col2, col3 = st.columns([2, 1, 1])
@@ -217,16 +320,30 @@ def show_home_page():
         st.subheader("Historical Context")
         data = load_data()
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Total No-Hitters in Database", len(data))
         with col2:
             last_no_hitter = data['date'].max()
             days_since = (pd.Timestamp.now() - last_no_hitter).days
             st.metric("Days Since Last No-Hitter", days_since)
+        with col3:
+            # Show next scheduled refresh
+            now = datetime.now()
+            if now.hour >= 6:
+                # Next refresh is tomorrow at 6 AM
+                next_refresh = (now + timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
+            else:
+                # Next refresh is today at 6 AM
+                next_refresh = now.replace(hour=6, minute=0, second=0, microsecond=0)
+            
+            time_until = next_refresh - now
+            hours_until = int(time_until.total_seconds() // 3600)
+            st.metric("Next Auto-Update", f"{hours_until}h {int((time_until.total_seconds() % 3600) // 60)}m")
         
     except Exception as e:
         st.error(f"Error generating prediction: {str(e)}")
+        st.info("💡 Try running `./update_today.py` from the command line to force a fresh prediction.")
 
 def show_trends_page():
     """Display trends and visualizations"""
