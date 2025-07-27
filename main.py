@@ -221,7 +221,32 @@ def force_update():
         print(f"❌ Error: {e}")
         print("📋 Check logs for more details")
 
+def ensure_directories():
+    """Ensure required directories exist with proper permissions"""
+    import os
+    import stat
+    
+    directories = ['data', 'logs']
+    for dir_name in directories:
+        if not os.path.exists(dir_name):
+            print(f"📁 Creating {dir_name} directory...")
+            os.makedirs(dir_name, mode=0o755)
+        else:
+            # Check if we can write to the directory
+            try:
+                test_file = os.path.join(dir_name, '.write_test')
+                with open(test_file, 'w') as f:
+                    f.write('test')
+                os.remove(test_file)
+            except (OSError, PermissionError):
+                print(f"❌ Permission error: Cannot write to {dir_name}/ directory")
+                print(f"💡 Fix with: sudo chown -R $USER:$USER {dir_name}/ && chmod 755 {dir_name}/")
+                sys.exit(1)
+
 def main():
+    # Ensure directories exist and are writable
+    ensure_directories()
+    
     parser = argparse.ArgumentParser(
         description='No-Hitter Forecaster - MLB No-Hitter Prediction System',
         formatter_class=argparse.RawDescriptionHelpFormatter,

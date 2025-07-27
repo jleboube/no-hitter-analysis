@@ -17,8 +17,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create necessary directories
-RUN mkdir -p logs data
+# Create necessary directories with proper permissions
+RUN mkdir -p logs data && \
+    chown -R root:root logs data && \
+    chmod 755 logs data
 
 # Create supervisor configuration
 RUN echo '[supervisord]' > /etc/supervisor/conf.d/supervisord.conf && \

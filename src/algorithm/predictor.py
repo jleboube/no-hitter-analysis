@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 from typing import Dict, Tuple
+import statsapi
 
 # Add data modules to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'data'))
@@ -497,7 +498,246 @@ class NoHitterPredictor:
         return "; ".join(explanations)
     
     def get_probable_pitchers_for_date(self, target_date):
-        """Get probable starting pitchers for the given date (simulated for demo)"""
+        """Get actual probable starting pitchers for the given date from MLB API"""
+        try:
+            # Format date for MLB API
+            date_str = target_date.strftime('%Y-%m-%d')
+            
+            # Get today's schedule from MLB API
+            schedule = statsapi.schedule(date=date_str)
+            
+            if not schedule:
+                logger.warning(f"No MLB games scheduled for {date_str}")
+                return []
+            
+            probable_pitchers = []
+            
+            for game in schedule:
+                # Get game details including probable pitchers
+                game_id = game['game_id']
+                
+                try:
+                    # Get detailed game info with probable pitchers
+                    game_info = statsapi.get('game', {'gamePk': game_id})
+                    
+                    home_team = game['home_name']
+                    away_team = game['away_name']
+                    home_team_abbr = self.get_team_abbreviation(home_team)
+                    away_team_abbr = self.get_team_abbreviation(away_team)
+                    
+                    # Extract probable pitchers
+                    probable_pitchers_data = game_info.get('gameData', {}).get('probablePitchers', {})
+                    
+                    # Get home pitcher (primary focus for no-hitter predictions)
+                    home_pitcher = probable_pitchers_data.get('home')
+                    if home_pitcher:
+                        pitcher_info = self.get_real_pitcher_info(
+                            home_pitcher, home_team_abbr, away_team_abbr, target_date, True, game
+                        )
+                        if pitcher_info:
+                            probable_pitchers.append(pitcher_info)
+                    
+                    # Also get away pitcher
+                    away_pitcher = probable_pitchers_data.get('away')
+                    if away_pitcher:
+                        pitcher_info = self.get_real_pitcher_info(
+                            away_pitcher, away_team_abbr, home_team_abbr, target_date, False, game
+                        )
+                        if pitcher_info:
+                            probable_pitchers.append(pitcher_info)
+                            
+                except Exception as e:
+                    logger.warning(f"Error getting pitcher info for game {game_id}: {e}")
+                    continue
+            
+            logger.info(f"Found {len(probable_pitchers)} probable pitchers for {date_str}")
+            return probable_pitchers
+            
+        except Exception as e:
+            logger.error(f"Error fetching MLB schedule for {target_date}: {e}")
+            # Try MySportsFeeds API as backup
+            logger.info("Trying MySportsFeeds API as backup")
+            mysportsfeeds_pitchers = self.get_mysportsfeeds_pitchers(target_date)
+            if mysportsfeeds_pitchers:
+                return mysportsfeeds_pitchers
+            
+            # Final fallback to simulated data if both APIs fail
+            logger.info("Both APIs failed, falling back to simulated data")
+            return self.get_simulated_pitchers_for_date(target_date)
+    
+    def get_team_abbreviation(self, team_name):
+        """Convert full team name to abbreviation"""
+        team_mapping = {
+            'Los Angeles Angels': 'LAA', 'Houston Astros': 'HOU', 'Oakland Athletics': 'OAK',
+            'Seattle Mariners': 'SEA', 'Texas Rangers': 'TEX', 'Los Angeles Dodgers': 'LAD',
+            'San Diego Padres': 'SD', 'San Francisco Giants': 'SF', 'Colorado Rockies': 'COL',
+            'Arizona Diamondbacks': 'ARI', 'Minnesota Twins': 'MIN', 'Kansas City Royals': 'KC',
+            'Detroit Tigers': 'DET', 'Chicago White Sox': 'CWS', 'Cleveland Guardians': 'CLE',
+            'Milwaukee Brewers': 'MIL', 'St. Louis Cardinals': 'STL', 'Chicago Cubs': 'CHC',
+            'Cincinnati Reds': 'CIN', 'Pittsburgh Pirates': 'PIT', 'Atlanta Braves': 'ATL',
+            'Miami Marlins': 'MIA', 'New York Mets': 'NYM', 'Philadelphia Phillies': 'PHI',
+            'Washington Nationals': 'WSN', 'Boston Red Sox': 'BOS', 'New York Yankees': 'NYY',
+            'Tampa Bay Rays': 'TB', 'Toronto Blue Jays': 'TOR', 'Baltimore Orioles': 'BAL'
+        }
+        return team_mapping.get(team_name, team_name[:3].upper())
+    
+    def get_real_pitcher_info(self, pitcher_data, team, opponent, target_date, is_home, game_info):
+        """Get real pitcher information from MLB API"""
+        try:
+            pitcher_id = pitcher_data.get('id')
+            pitcher_name = pitcher_data.get('fullName', 'Unknown Pitcher')
+            
+            if not pitcher_id:
+                return None
+            
+            # Get pitcher's current season stats
+            try:
+                player_stats = statsapi.player_stat_data(pitcher_id, group="[pitching]", type="season")
+                
+                # Extract relevant stats
+                stats = {}
+                if player_stats and 'stats' in player_stats:
+                    season_stats = player_stats['stats'][0]['stats'] if player_stats['stats'] else {}
+                    
+                    stats = {
+                        'recent_era': float(season_stats.get('era', 4.0)),
+                        'recent_whip': float(season_stats.get('whip', 1.3)),
+                        'k_per_nine': float(season_stats.get('strikeoutsPer9Inn', 8.0)),
+                        'quality_starts': int(season_stats.get('qualityStarts', 5)),
+                        'wins': int(season_stats.get('wins', 5)),
+                        'losses': int(season_stats.get('losses', 5)),
+                        'innings_pitched': float(season_stats.get('inningsPitched', 50.0)),
+                        'strikeouts': int(season_stats.get('strikeOuts', 50)),
+                        'walks': int(season_stats.get('baseOnBalls', 20)),
+                        'hits_allowed': int(season_stats.get('hits', 60))
+                    }
+                else:
+                    # Fallback stats if API doesn't return data
+                    stats = {
+                        'recent_era': 3.8, 'recent_whip': 1.25, 'k_per_nine': 8.5,
+                        'quality_starts': 8, 'wins': 6, 'losses': 4,
+                        'innings_pitched': 75.0, 'strikeouts': 70, 'walks': 25, 'hits_allowed': 65
+                    }
+                    
+            except Exception as e:
+                logger.warning(f"Error getting stats for pitcher {pitcher_name}: {e}")
+                # Use default stats
+                stats = {
+                    'recent_era': 3.8, 'recent_whip': 1.25, 'k_per_nine': 8.5,
+                    'quality_starts': 8, 'wins': 6, 'losses': 4,
+                    'innings_pitched': 75.0, 'strikeouts': 70, 'walks': 25, 'hits_allowed': 65
+                }
+            
+            # Get stadium info
+            venue = game_info.get('gameData', {}).get('venue', {})
+            stadium_name = venue.get('name', f'{team} Stadium')
+            
+            return {
+                'name': pitcher_name,
+                'team': team,
+                'opponent': opponent,
+                'is_home': is_home,
+                'stadium': stadium_name,
+                'stats': stats,
+                'pitcher_id': pitcher_id
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing pitcher data: {e}")
+            return None
+    
+    def get_mysportsfeeds_pitchers(self, target_date):
+        """Backup method using MySportsFeeds API"""
+        try:
+            import requests
+            from requests.auth import HTTPBasicAuth
+            
+            # MySportsFeeds API credentials
+            api_key = "8651000e-1a9a-4e64-9bf2-69025a"
+            password = "MYSPORTSFEEDS"
+            
+            # Format date
+            date_str = target_date.strftime('%Y%m%d')
+            season = target_date.year
+            
+            # Get daily schedule
+            url = f"https://api.mysportsfeeds.com/v2.1/pull/mlb/{season}/date/{date_str}/games.json"
+            
+            response = requests.get(
+                url, 
+                auth=HTTPBasicAuth(api_key, password),
+                headers={'User-Agent': 'NoHitterForecaster/1.0'}
+            )
+            
+            if response.status_code != 200:
+                logger.warning(f"MySportsFeeds API returned status {response.status_code}")
+                return []
+            
+            data = response.json()
+            games = data.get('games', [])
+            
+            if not games:
+                logger.warning(f"No games found in MySportsFeeds for {target_date}")
+                return []
+            
+            probable_pitchers = []
+            
+            for game in games:
+                try:
+                    home_team = game['schedule']['homeTeam']['abbreviation']
+                    away_team = game['schedule']['awayTeam']['abbreviation']
+                    venue = game['schedule']['venue']['name']
+                    
+                    # MySportsFeeds doesn't always have probable pitchers in schedule
+                    # So we'll create entries for both teams and use season stats
+                    
+                    # Get season stats for probable pitchers (this is a simplified approach)
+                    # In a full implementation, you'd need to track probable pitchers separately
+                    
+                    # For now, create placeholder pitcher info that will use season averages
+                    home_pitcher_info = {
+                        'name': f'{home_team} Probable Starter',
+                        'team': home_team,
+                        'opponent': away_team,
+                        'is_home': True,
+                        'stadium': venue,
+                        'stats': {
+                            'recent_era': 3.8, 'recent_whip': 1.25, 'k_per_nine': 8.5,
+                            'quality_starts': 8, 'wins': 6, 'losses': 4,
+                            'innings_pitched': 75.0, 'strikeouts': 70, 'walks': 25, 'hits_allowed': 65
+                        },
+                        'pitcher_id': f'msf_{home_team}_home'
+                    }
+                    
+                    away_pitcher_info = {
+                        'name': f'{away_team} Probable Starter',
+                        'team': away_team,
+                        'opponent': home_team,
+                        'is_home': False,
+                        'stadium': venue,
+                        'stats': {
+                            'recent_era': 3.9, 'recent_whip': 1.27, 'k_per_nine': 8.3,
+                            'quality_starts': 7, 'wins': 5, 'losses': 5,
+                            'innings_pitched': 72.0, 'strikeouts': 68, 'walks': 27, 'hits_allowed': 68
+                        },
+                        'pitcher_id': f'msf_{away_team}_away'
+                    }
+                    
+                    probable_pitchers.extend([home_pitcher_info, away_pitcher_info])
+                    
+                except Exception as e:
+                    logger.warning(f"Error processing MySportsFeeds game data: {e}")
+                    continue
+            
+            logger.info(f"Found {len(probable_pitchers)} pitchers from MySportsFeeds for {target_date}")
+            return probable_pitchers
+            
+        except Exception as e:
+            logger.error(f"Error with MySportsFeeds API: {e}")
+            return []
+    
+    def get_simulated_pitchers_for_date(self, target_date):
+        """Fallback method - get simulated pitchers if MLB API fails"""
         import random
         
         # Seed random for consistent results per date

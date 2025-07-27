@@ -38,6 +38,14 @@ if ! python3 -c "import streamlit" 2>/dev/null; then
     pip3 install -r requirements.txt
 fi
 
+# Create and set permissions for data directories
+echo "📁 Setting up data directories..."
+mkdir -p data logs
+chown -R $USER:$USER data logs
+chmod 755 data logs
+chmod 644 data/* 2>/dev/null || true
+chmod 644 logs/* 2>/dev/null || true
+
 # Initialize data if needed
 echo "📊 Initializing data..."
 python3 main.py update
