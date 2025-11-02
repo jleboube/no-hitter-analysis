@@ -2,6 +2,8 @@
 
 A Python web application that predicts the daily probability of MLB no-hitters using a novel Bayesian-updated Poisson statistical model.
 
+<a href="https://www.buymeacoffee.com/muscl3n3rd" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" style="height: 37px !important;width: 170px !important;box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;-webkit-box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;" ></a>
+
 ## Features
 
 - **Daily Predictions**: Calculates percentage chance of at least one no-hitter occurring each day during MLB season
